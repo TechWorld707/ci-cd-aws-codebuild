@@ -28,7 +28,7 @@ class PipelineStack(Stack):
         code_quality_build = codebuild.PipelineProject(
             self,
             "CodeQuality",
-            build_spec=codebuild.BuildSpec.from_source_filename("buildspec_test.yml"),
+            build_spec=codebuild.BuildSpec.from_source_filename("cicd-aws/buildspec_test.yml"),
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxLambdaBuildImage.AMAZON_LINUX_2023_PYTHON_3_12,
                 compute_type=codebuild.ComputeType.LAMBDA_10GB,
