@@ -6,7 +6,7 @@ from aws_cdk import (
     aws_codepipeline_actions as codepipeline_actions,
 )
 
-REPOSITORY_NAME = "cicd-workshop"
+REPOSITORY_NAME = "ci-cd-aws-codebuild"
 
 
 class RepoConnection:
