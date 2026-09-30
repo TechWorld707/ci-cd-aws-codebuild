@@ -1,9 +1,11 @@
+import os
 from constructs import Construct
 from aws_cdk import (
     Stack,
     aws_codepipeline as codepipeline,
     aws_codebuild as codebuild,
     aws_codepipeline_actions as codepipeline_actions,
+    aws_iam as iam,
 )
 
 from infrastructure.repo_connection import RepoConnection
@@ -11,7 +13,14 @@ from infrastructure.repo_connection import RepoConnection
 
 class PipelineStack(Stack):
 
-    def __init__(self, scope: Construct, id: str, ecr_repository, **kwargs) -> None:
+    def __init__(
+        self,
+        scope: Construct,
+        id: str,
+        ecr_repository,
+        test_app_fargate,
+        **kwargs,
+    ) -> None:
         super().__init__(scope, id, **kwargs)
 
         self.source = RepoConnection(self)
@@ -28,7 +37,7 @@ class PipelineStack(Stack):
         code_quality_build = codebuild.PipelineProject(
             self,
             "CodeQuality",
-            build_spec=codebuild.BuildSpec.from_source_filename("cicd-aws/buildspec_test.yml"),
+            build_spec=codebuild.BuildSpec.from_source_filename("buildspec_test.yml"),
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxLambdaBuildImage.AMAZON_LINUX_2023_PYTHON_3_12,
                 compute_type=codebuild.ComputeType.LAMBDA_10GB,
@@ -38,7 +47,7 @@ class PipelineStack(Stack):
         docker_build_project = codebuild.PipelineProject(
             self,
             "DockerBuild",
-            build_spec=codebuild.BuildSpec.from_source_filename("cicd-aws/buildspec_docker.yml"),
+            build_spec=codebuild.BuildSpec.from_source_filename("buildspec_docker.yml"),
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxBuildImage.STANDARD_7_0,
                 privileged=True,
@@ -54,16 +63,36 @@ class PipelineStack(Stack):
                     ),
                     "AWS_DEFAULT_REGION": codebuild.BuildEnvironmentVariable(
                         type=codebuild.BuildEnvironmentVariableType.PLAINTEXT,
-                        value=self.region,
+                        value=os.environ["CDK_DEFAULT_REGION"],
                     ),
                 },
             ),
         )
 
-        ecr_repository.grant_pull_push(docker_build_project)
+        docker_build_project.add_to_role_policy(
+            iam.PolicyStatement(
+                effect=iam.Effect.ALLOW,
+                actions=[
+                    "ecr:GetAuthorizationToken",
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:GetDownloadUrlForLayer",
+                    "ecr:GetRepositoryPolicy",
+                    "ecr:DescribeRepositories",
+                    "ecr:ListImages",
+                    "ecr:DescribeImages",
+                    "ecr:BatchGetImage",
+                    "ecr:InitiateLayerUpload",
+                    "ecr:UploadLayerPart",
+                    "ecr:CompleteLayerUpload",
+                    "ecr:PutImage",
+                ],
+                resources=["*"],
+            )
+        )
 
         source_output = codepipeline.Artifact()
         unit_test_output = codepipeline.Artifact()
+        docker_build_output = codepipeline.Artifact()
 
         source_action = self.source.source_action(source_output)
 
@@ -82,6 +111,19 @@ class PipelineStack(Stack):
             action_name="Docker-Build",
             project=docker_build_project,
             input=source_output,
+            outputs=[docker_build_output],
         )
 
         pipeline.add_stage(stage_name="Docker-Push-ECR", actions=[docker_build_action])
+
+        pipeline.add_stage(
+            stage_name="Deploy-Test",
+            actions=[
+                codepipeline_actions.EcsDeployAction(
+                    action_name="Deploy-Fargate-Test",
+                    service=test_app_fargate.service,
+                    input=docker_build_output,
+                )
+            ],
+        )
+ 
